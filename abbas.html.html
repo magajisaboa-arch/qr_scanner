@@ -1,0 +1,488 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Attendance System</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body {
+      background-color: #121212;
+      color: #eee;
+      font-family: 'Roboto', sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .navbar {
+      background: #1e1e1e;
+      padding: 10px;
+      box-shadow: 0 2px 4px rgba(0, 255, 255, 0.2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .navbar h1 {
+      margin: 0 20px;
+      font-size: 1.5em;
+    }
+
+    .navbar button {
+      background: #00bcd4;
+      color: white;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    .navbar button:hover {
+      background: #0097a7;
+    }
+
+    .container {
+      text-align: center;
+      background: #1e1e1e;
+      padding: 20px;
+      border-radius: 10px;
+      width: 90%;
+      max-width: 500px;
+      margin: 20px auto;
+      box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+      animation: fadeIn 0.5s ease-in;
+    }
+
+    input, select, button {
+      width: 90%;
+      padding: 12px;
+      margin: 10px 0;
+      border: none;
+      border-radius: 5px;
+      font-size: 1em;
+      background: #2a2a2a;
+      color: #eee;
+    }
+
+    button {
+      background: #00bcd4;
+      color: white;
+      cursor: pointer;
+      transition: background 0.3s, transform 0.2s;
+    }
+
+    button:hover {
+      background: #0097a7;
+      transform: scale(1.05);
+    }
+
+    #qrCanvas, #qrScanner {
+      margin: 20px auto;
+      max-width: 200px;
+      position: relative;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    #attendanceLogs {
+      text-align: left;
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 10px;
+      background: #2a2a2a;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+    }
+
+    th, td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid #3a3a3a;
+    }
+
+    th {
+      background: #00bcd4;
+      color: #121212;
+    }
+
+    .button-container {
+      display: flex;
+      justify-content: space-between;
+      margin: 10px 0;
+    }
+
+    .button-container button {
+      width: 48%;
+    }
+
+    /* Toast Notification Styles */
+    #toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #00bcd4;
+      color: white;
+      padding: 15px 20px;
+      border-radius: 5px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+      display: none;
+      min-width: 300px;
+      text-align: center;
+    }
+
+    #toast.error {
+      background: #ff4444;
+    }
+
+    #toast.show {
+      display: block;
+      animation: fadeInOut 3s ease-in-out;
+    }
+
+    @keyframes fadeInOut {
+      0% { opacity: 0; transform: translateX(100%); }
+      10% { opacity: 1; transform: translateX(0); }
+      90% { opacity: 1; transform: translateX(0); }
+      100% { opacity: 0; transform: translateX(100%); }
+    }
+
+    @media print {
+      .navbar, .button-container, button:not(#printButton), #toast {
+        display: none;
+      }
+      #attendanceLogs {
+        max-height: none;
+        overflow: visible;
+      }
+      body {
+        background: white;
+        color: black;
+      }
+      table {
+        border: 1px solid black;
+      }
+      th, td {
+        border: 1px solid black;
+      }
+      th {
+        background: #f0f0f0;
+        color: black;
+      }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        margin: 10px;
+        padding: 15px;
+      }
+      .navbar h1 {
+        font-size: 1.2em;
+      }
+      .button-container button {
+        width: 47%;
+      }
+      #toast {
+        right: 10px;
+        left: 10px;
+        min-width: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Toast Notification -->
+  <div id="toast"></div>
+
+  <!-- Navigation Bar -->
+  <div class="navbar">
+    <h1>QR Attendance System</h1>
+    <button onclick="logout()">Logout</button>
+  </div>
+
+  <!-- Login Section -->
+  <div id="loginSection" class="section container active">
+    <h2>Login</h2>
+    <select id="roleSelect">
+      <option value="admin">Admin</option>
+      <option value="student">Student</option>
+    </select>
+    <button onclick="login()">Login</button>
+  </div>
+
+  <!-- Admin Dashboard Section -->
+  <div id="dashboardSection" class="section container">
+    <h2>Admin Dashboard</h2>
+    <input type="text" id="sessionIdInput" placeholder="Enter Session ID (required)">
+    <button onclick="generateQR()">Generate QR Code</button>
+    <div id="qrCanvas"></div>
+    <button onclick="showSection('logsSection')">View Attendance Logs</button>
+  </div>
+
+  <!-- Attendance Logs Section -->
+  <div id="logsSection" class="section container">
+    <h2>Attendance Logs</h2>
+    <div id="attendanceLogs"></div>
+    <div class="button-container">
+      <button onclick="clearLogs()">Clear Logs</button>
+      <button id="printButton" onclick="printLogs()">Print Logs</button>
+    </div>
+    <button onclick="showSection('dashboardSection')">Back to Dashboard</button>
+  </div>
+
+  <!-- Scan Attendance Section -->
+  <div id="scanSection" class="section container">
+    <h2>Scan Attendance</h2>
+    <input type="text" id="matricNo" placeholder="Enter Your Matric No. (e.g., ABC12345)">
+    <div id="qrScanner"></div>
+    <button onclick="startScanner()">Start Scanning</button>
+    <p id="scanStatus"></p>
+  </div>
+
+  <!-- Profile Section -->
+  <div id="profileSection" class="section container">
+    <h2>User Profile</h2>
+    <p>Profile details go here.</p>
+    <button onclick="showSection('scanSection')">Back to Scan</button>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    // Initialize LocalStorage for Attendance Logs
+    if (!localStorage.getItem('attendanceLogs')) {
+      localStorage.setItem('attendanceLogs', JSON.stringify([]));
+    }
+
+    // Toast Notification Function
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = type === 'error' ? 'error show' : 'show';
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // Navigation Logic
+    function showSection(sectionId) {
+      document.querySelectorAll('.section').forEach(section => {
+        section.classList.remove('active');
+      });
+      document.getElementById(sectionId).classList.add('active');
+      document.querySelector('.navbar button').style.display = sectionId === 'loginSection' ? 'none' : 'block';
+      if (sectionId === 'logsSection') {
+        displayLogs();
+      }
+    }
+
+    function login() {
+      const role = document.getElementById('roleSelect').value;
+      if (role === 'admin') {
+        showSection('dashboardSection');
+      } else {
+        showSection('scanSection');
+      }
+    }
+
+    function logout() {
+      showSection('loginSection');
+    }
+
+    // QR Code Generation with Session ID Overlay
+    function generateQR() {
+      const sessionId = document.getElementById('sessionIdInput').value.trim();
+      if (!sessionId) {
+        showToast('Please enter a Session ID before generating the QR code.', 'error');
+        return;
+      }
+      const qrCanvas = document.getElementById('qrCanvas');
+      qrCanvas.innerHTML = ''; // Clear previous QR
+      new QRCode(qrCanvas, {
+        text: sessionId,
+        width: 200,
+        height: 200,
+        colorDark: '#00bcd4',
+        colorLight: '#1e1e1e'
+      });
+
+      // Overlay session ID text
+      setTimeout(() => {
+        const canvas = qrCanvas.querySelector('canvas');
+        if (canvas) {
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = 'rgba(30, 30, 30, 0.7)';
+          ctx.fillRect(50, 80, 100, 40);
+          ctx.font = 'bold 14px Roboto';
+          ctx.fillStyle = '#ffffff';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(sessionId, 100, 100);
+        }
+        showToast('QR Code generated successfully!');
+      }, 100);
+    }
+
+    // QR Code Scanning
+    let html5QrcodeScanner;
+    function startScanner() {
+      const matricNo = document.getElementById('matricNo').value.trim();
+      const matricRegex = /^[A-Z]{3}\d{5}$/; // e.g., ABC12345
+      if (!matricNo) {
+        showToast('Please enter your Matric No. before scanning.', 'error');
+        return;
+      }
+      if (!matricRegex.test(matricNo)) {
+        showToast('Invalid Matric No. format. Use format like ABC12345.', 'error');
+        return;
+      }
+      const qrScanner = document.getElementById('qrScanner');
+      html5QrcodeScanner = new Html5Qrcode('qrScanner');
+      html5QrcodeScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 200, height: 200 } },
+        (decodedText) => {
+          if (recordAttendance(matricNo, decodedText)) {
+            showToast('Attendance recorded for ' + matricNo + '! Session ID: ' + decodedText);
+            document.getElementById('matricNo').value = ''; // Clear input
+          }
+          html5QrcodeScanner.stop();
+        },
+        (error) => {
+          console.warn('QR Scan Error:', error);
+          showToast('Scanning error: ' + error, 'error');
+        }
+      ).catch(err => {
+        console.error('Scanner Error:', err);
+        showToast('Failed to start scanner. Ensure HTTPS and camera permissions.', 'error');
+      });
+    }
+
+    // Record Attendance with Duplicate Prevention
+    function recordAttendance(matricNo, sessionId) {
+      const logs = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
+      if (logs.some(log => log.matricNo === matricNo && log.sessionId === sessionId)) {
+        showToast('Attendance already recorded for this Matric No. and Session ID.', 'error');
+        return false;
+      }
+      const newLog = {
+        matricNo: matricNo,
+        sessionId: sessionId,
+        timestamp: new Date().toISOString()
+      };
+      logs.push(newLog);
+      localStorage.setItem('attendanceLogs', JSON.stringify(logs));
+      return true;
+    }
+
+    // Display Logs as Table
+    function displayLogs() {
+      const logs = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
+      const logsContainer = document.getElementById('attendanceLogs');
+      logsContainer.innerHTML = '';
+      if (logs.length === 0) {
+        logsContainer.innerHTML = '<p>No attendance logs yet.</p>';
+        return;
+      }
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const tbody = document.createElement('tbody');
+      const headerRow = document.createElement('tr');
+      const headers = ['Session ID', 'Matric No.'];
+      headers.forEach(headerText => {
+        const th = document.createElement('th');
+        th.textContent = headerText;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      logs.forEach(log => {
+        const row = document.createElement('tr');
+        const sessionCell = document.createElement('td');
+        sessionCell.textContent = log.sessionId;
+        const matricCell = document.createElement('td');
+        matricCell.textContent = log.matricNo;
+        row.appendChild(sessionCell);
+        row.appendChild(matricCell);
+        tbody.appendChild(row);
+      });
+      table.appendChild(thead);
+      table.appendChild(tbody);
+      logsContainer.appendChild(table);
+    }
+
+    // Clear Logs (For Admin)
+    function clearLogs() {
+      if (confirm('Are you sure you want to clear all logs?')) {
+        localStorage.setItem('attendanceLogs', JSON.stringify([]));
+        displayLogs();
+        showToast('Logs cleared successfully!');
+      }
+    }
+
+    // Print Logs
+    function printLogs() {
+      window.print();
+    }
+  </script>
+</body>
+</html>
